@@ -1,0 +1,17 @@
+# Variáveis de ambiente
+.env
+
+# Arquivos temporários do Python
+__pycache__/
+*.pyc
+
+# Banco de dados local
+*.db
+*.sqlite3
+
+# Pastas de Upload (NÃO SUBIR VÍDEOS PRO GITHUB)
+temp_uploads/
+
+# Ambientes Virtuais (se você usar)
+venv/
+env/
