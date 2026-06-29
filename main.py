@@ -263,6 +263,68 @@ def tiktok_disconnect(req: DisconnectRequest):
     db_helper.delete_tiktok_connection(req.email)
     return {"success": True}
 
+@app.get("/api/tiktok/creator-info")
+def get_tiktok_creator_info(email: str = Query(..., description="E-mail do usuário logado")):
+    """
+    Busca informações da conta do criador no TikTok Direct Post API.
+    Retorna opções de privacidade, limites e restrições.
+    """
+    connection = db_helper.get_tiktok_connection(email)
+    if not connection or not connection["access_token"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Nenhuma conta do TikTok conectada para este e-mail."
+        )
+        
+    access_token = connection["access_token"]
+    
+    url = "https://open.tiktokapis.com/v2/post/publish/creator_info/query/"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json; charset=UTF-8"
+    }
+    
+    # Valores default complacentes com as diretrizes do TikTok (Sandbox / Fallback)
+    fallback_data = {
+        "creator_nickname": connection.get("username") or "Criador Sandbox",
+        "creator_avatar_url": connection.get("avatar") or "",
+        "privacy_level_options": ["PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "SELF_ONLY"],
+        "comment_disabled": False,
+        "duet_disabled": False,
+        "stitch_disabled": False,
+        "max_video_post_duration_sec": 600,
+        "can_post": True,
+        "remaining_posts": 5
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json={})
+        print(f"[TIKTOK CREATOR INFO] Status: {response.status_code}, Body: {response.text}")
+        
+        if response.status_code == 200:
+            res_json = response.json()
+            if res_json.get("error", {}).get("code") == "ok":
+                data = res_json.get("data", {})
+                return {
+                    "creator_nickname": data.get("creator_nickname") or fallback_data["creator_nickname"],
+                    "creator_avatar_url": data.get("creator_avatar_url") or fallback_data["creator_avatar_url"],
+                    "privacy_level_options": data.get("privacy_level_options") or fallback_data["privacy_level_options"],
+                    "comment_disabled": data.get("comment_disabled", False),
+                    "duet_disabled": data.get("duet_disabled", False),
+                    "stitch_disabled": data.get("stitch_disabled", False),
+                    "max_video_post_duration_sec": data.get("max_video_post_duration_sec") or 600,
+                    "can_post": True,
+                    "remaining_posts": 5
+                }
+            else:
+                err_msg = res_json.get("error", {}).get("message", "")
+                print(f"[TIKTOK CREATOR INFO ERROR] {err_msg}")
+        
+        return fallback_data
+    except Exception as e:
+        print(f"[TIKTOK CREATOR INFO EXCEPTION] {str(e)}")
+        return fallback_data
+
 # ==============================================================================
 # RECURSOS DO DASHBOARD (MOCK E UPLOAD REAL)
 # ==============================================================================
@@ -307,7 +369,16 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 # Dicionário global para rastrear o progresso e status dos uploads ativos em segundo plano
 active_uploads = {}
 
-def upload_to_tiktok_background(file_path: str, email: str, title: str, post_id: str):
+def upload_to_tiktok_background(
+    file_path: str, 
+    email: str, 
+    title: str, 
+    post_id: str, 
+    privacy_level: str = "SELF_ONLY", 
+    disable_comment: bool = False, 
+    disable_duet: bool = True, 
+    disable_stitch: bool = True
+):
     try:
         active_uploads[post_id] = {"progress": 5, "status": "uploading", "message": "Inicializando com o TikTok..."}
         
@@ -357,10 +428,10 @@ def upload_to_tiktok_background(file_path: str, email: str, title: str, post_id:
         payload = {
             "post_info": {
                 "title": title or "Post Recap Video",
-                "privacy_level": "SELF_ONLY",
-                "disable_duet": True,
-                "disable_stitch": True,
-                "disable_comment": False
+                "privacy_level": privacy_level,
+                "disable_duet": disable_duet,
+                "disable_stitch": disable_stitch,
+                "disable_comment": disable_comment
             },
             "source_info": {
                 "source": "FILE_UPLOAD",
@@ -454,6 +525,10 @@ async def tiktok_upload(
     email: str = Form(None),
     title: str = Form(""),
     post_id: str = Form(None),
+    privacy_level: str = Form("SELF_ONLY"),
+    disable_comment: bool = Form(False),
+    disable_duet: bool = Form(True),
+    disable_stitch: bool = Form(True),
     video: UploadFile = File(None)
 ):
     """
@@ -494,7 +569,11 @@ async def tiktok_upload(
         temp_file_path,
         email,
         title,
-        post_id
+        post_id,
+        privacy_level,
+        disable_comment,
+        disable_duet,
+        disable_stitch
     )
     
     return {
