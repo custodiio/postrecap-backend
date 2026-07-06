@@ -130,6 +130,7 @@ def tiktok_callback(code: str = None, state: str = None, error: str = None, erro
     }
     
     response = requests.post(token_url, headers=headers, data=data)
+    print(f"[TIKTOK CALLBACK] Resposta Troca de Token: Status {response.status_code}, Body: {response.text}")
     
     if response.status_code != 200:
         return RedirectResponse(url=f"{frontend_redirect}/dashboard?tiktok_error=token_exchange_failed")
@@ -140,6 +141,7 @@ def tiktok_callback(code: str = None, state: str = None, error: str = None, erro
     open_id = res_json.get("open_id")
     
     if not access_token:
+        print(f"[TIKTOK CALLBACK ERROR] A resposta nao contem access_token. JSON completo: {res_json}")
         return RedirectResponse(url=f"{frontend_redirect}/dashboard?tiktok_error=no_token_in_response")
         
     # Busca dados básicos de perfil (username, avatar) para mostrar no dashboard
