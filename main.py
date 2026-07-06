@@ -136,6 +136,7 @@ def tiktok_callback(code: str = None, state: str = None, error: str = None, erro
         
     res_json = response.json()
     access_token = res_json.get("access_token")
+    refresh_token = res_json.get("refresh_token")
     open_id = res_json.get("open_id")
     
     if not access_token:
@@ -165,6 +166,7 @@ def tiktok_callback(code: str = None, state: str = None, error: str = None, erro
     db_helper.save_tiktok_connection(
         email=email,
         access_token=access_token,
+        refresh_token=refresh_token,
         open_id=open_id,
         username=username,
         avatar=avatar

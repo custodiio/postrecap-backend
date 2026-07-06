@@ -29,6 +29,7 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         email TEXT UNIQUE NOT NULL,
         access_token TEXT NOT NULL,
+        refresh_token TEXT,
         open_id TEXT,
         username TEXT,
         avatar TEXT,
@@ -37,6 +38,12 @@ def init_db():
     )
     """)
     
+    # Tenta adicionar a coluna refresh_token caso a tabela já exista sem ela
+    try:
+        cursor.execute("ALTER TABLE tiktok_connections ADD COLUMN refresh_token TEXT")
+    except sqlite3.OperationalError:
+        pass
+        
     conn.commit()
     conn.close()
     print("[DB] Banco de dados inicializado com sucesso em:", DB_PATH)
@@ -92,7 +99,7 @@ def list_users():
     conn.close()
     return [{"email": r[0], "approved": bool(r[1]), "created_at": r[2]} for r in rows]
 
-def save_tiktok_connection(email: str, access_token: str, open_id: str = None, username: str = None, avatar: str = None):
+def save_tiktok_connection(email: str, access_token: str, refresh_token: str = None, open_id: str = None, username: str = None, avatar: str = None):
     """Salva ou atualiza os tokens e detalhes da conta do TikTok do usuário."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -101,16 +108,23 @@ def save_tiktok_connection(email: str, access_token: str, open_id: str = None, u
     row = cursor.fetchone()
     
     if row:
-        cursor.execute("""
-        UPDATE tiktok_connections 
-        SET access_token = ?, open_id = ?, username = ?, avatar = ?, connected_at = CURRENT_TIMESTAMP
-        WHERE email = ?
-        """, (access_token, open_id, username, avatar, email))
+        if refresh_token:
+            cursor.execute("""
+            UPDATE tiktok_connections 
+            SET access_token = ?, refresh_token = ?, open_id = ?, username = ?, avatar = ?, connected_at = CURRENT_TIMESTAMP
+            WHERE email = ?
+            """, (access_token, refresh_token, open_id, username, avatar, email))
+        else:
+            cursor.execute("""
+            UPDATE tiktok_connections 
+            SET access_token = ?, open_id = ?, username = ?, avatar = ?, connected_at = CURRENT_TIMESTAMP
+            WHERE email = ?
+            """, (access_token, open_id, username, avatar, email))
     else:
         cursor.execute("""
-        INSERT INTO tiktok_connections (email, access_token, open_id, username, avatar)
-        VALUES (?, ?, ?, ?, ?)
-        """, (email, access_token, open_id, username, avatar))
+        INSERT INTO tiktok_connections (email, access_token, refresh_token, open_id, username, avatar)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """, (email, access_token, refresh_token, open_id, username, avatar))
         
     conn.commit()
     conn.close()
@@ -120,16 +134,17 @@ def get_tiktok_connection(email: str):
     """Busca as credenciais conectadas do TikTok para o e-mail do usuário."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT access_token, open_id, username, avatar FROM tiktok_connections WHERE email = ?", (email,))
+    cursor.execute("SELECT access_token, refresh_token, open_id, username, avatar FROM tiktok_connections WHERE email = ?", (email,))
     row = cursor.fetchone()
     conn.close()
     
     if row:
         return {
             "access_token": row[0],
-            "open_id": row[1],
-            "username": row[2],
-            "avatar": row[3]
+            "refresh_token": row[1],
+            "open_id": row[2],
+            "username": row[3],
+            "avatar": row[4]
         }
     return None
 
