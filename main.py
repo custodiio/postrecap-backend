@@ -756,7 +756,11 @@ def upload_to_youtube_background(
     email: str, 
     title: str, 
     post_id: str,
-    privacy_level: str = "private"
+    privacy_level: str = "private",
+    description: str = "",
+    tags: str = "",
+    made_for_kids: bool = False,
+    category_id: str = "24"
 ):
     try:
         active_youtube_uploads[post_id] = {"progress": 5, "status": "uploading", "message": "Inicializando com o YouTube..."}
@@ -811,14 +815,16 @@ def upload_to_youtube_background(
         body = {
             "snippet": {
                 "title": clean_title,
-                "description": "Enviado via Post Recap Studio",
-                "categoryId": "24"
+                "description": description if description else "Enviado via Post Recap Studio",
+                "categoryId": category_id if category_id else "24"
             },
             "status": {
                 "privacyStatus": privacy_level,
-                "selfDeclaredMadeForKids": False
+                "selfDeclaredMadeForKids": made_for_kids
             }
         }
+        if tags:
+            body["snippet"]["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
         
         media = MediaFileUpload(file_path, chunksize=1024*1024, resumable=True)
         request = youtube.videos().insert(
@@ -867,6 +873,10 @@ async def youtube_upload(
     title: str = Form(""),
     post_id: str = Form(None),
     privacy_level: str = Form("private"),
+    description: str = Form(""),
+    tags: str = Form(""),
+    made_for_kids: bool = Form(False),
+    category_id: str = Form("24"),
     video: UploadFile = File(None)
 ):
     """
@@ -905,7 +915,11 @@ async def youtube_upload(
         email,
         title,
         post_id,
-        privacy_level
+        privacy_level,
+        description,
+        tags,
+        made_for_kids,
+        category_id
     )
     
     return {
