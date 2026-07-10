@@ -38,9 +38,29 @@ def init_db():
     )
     """)
     
+    # Tabela de conexões do YouTube por e-mail de usuário
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS youtube_connections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE NOT NULL,
+        access_token TEXT NOT NULL,
+        refresh_token TEXT,
+        channel_id TEXT,
+        channel_name TEXT,
+        avatar TEXT,
+        connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(email) REFERENCES approved_users(email)
+    )
+    """)
+    
     # Tenta adicionar a coluna refresh_token caso a tabela já exista sem ela
     try:
         cursor.execute("ALTER TABLE tiktok_connections ADD COLUMN refresh_token TEXT")
+    except sqlite3.OperationalError:
+        pass
+        
+    try:
+        cursor.execute("ALTER TABLE youtube_connections ADD COLUMN refresh_token TEXT")
     except sqlite3.OperationalError:
         pass
         
@@ -156,6 +176,64 @@ def delete_tiktok_connection(email: str):
     conn.commit()
     conn.close()
     print(f"[DB] Conexão TikTok removida para o usuário: {email}")
+
+def save_youtube_connection(email: str, access_token: str, refresh_token: str = None, channel_id: str = None, channel_name: str = None, avatar: str = None):
+    """Salva ou atualiza os tokens e detalhes da conta do YouTube do usuário."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT id FROM youtube_connections WHERE email = ?", (email,))
+    row = cursor.fetchone()
+    
+    if row:
+        if refresh_token:
+            cursor.execute("""
+            UPDATE youtube_connections 
+            SET access_token = ?, refresh_token = ?, channel_id = ?, channel_name = ?, avatar = ?, connected_at = CURRENT_TIMESTAMP
+            WHERE email = ?
+            """, (access_token, refresh_token, channel_id, channel_name, avatar, email))
+        else:
+            cursor.execute("""
+            UPDATE youtube_connections 
+            SET access_token = ?, channel_id = ?, channel_name = ?, avatar = ?, connected_at = CURRENT_TIMESTAMP
+            WHERE email = ?
+            """, (access_token, channel_id, channel_name, avatar, email))
+    else:
+        cursor.execute("""
+        INSERT INTO youtube_connections (email, access_token, refresh_token, channel_id, channel_name, avatar)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """, (email, access_token, refresh_token, channel_id, channel_name, avatar))
+        
+    conn.commit()
+    conn.close()
+    print(f"[DB] Conexão YouTube salva para o usuário: {email}")
+
+def get_youtube_connection(email: str):
+    """Busca as credenciais conectadas do YouTube para o e-mail do usuário."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT access_token, refresh_token, channel_id, channel_name, avatar FROM youtube_connections WHERE email = ?", (email,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        return {
+            "access_token": row[0],
+            "refresh_token": row[1],
+            "channel_id": row[2],
+            "channel_name": row[3],
+            "avatar": row[4]
+        }
+    return None
+
+def delete_youtube_connection(email: str):
+    """Remove a conexão do YouTube do usuário (Disconnect)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM youtube_connections WHERE email = ?", (email,))
+    conn.commit()
+    conn.close()
+    print(f"[DB] Conexão YouTube removida para o usuário: {email}")
 
 # Inicializa o banco de dados local
 init_db()

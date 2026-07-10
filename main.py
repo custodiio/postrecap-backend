@@ -267,6 +267,157 @@ def tiktok_disconnect(req: DisconnectRequest):
     db_helper.delete_tiktok_connection(req.email)
     return {"success": True}
 
+# ==============================================================================
+# GOOGLE YOUTUBE OAUTH 2.0 FLOW (PRODUCTION READY)
+# ==============================================================================
+
+@app.get("/api/youtube/login")
+def youtube_login(email: str = Query(..., description="E-mail do usuário do Firebase que está fazendo login")):
+    """
+    Gera a URL de consentimento do Google e redireciona o usuário.
+    Salva o e-mail no parâmetro 'state' para associar no callback.
+    """
+    client_id = os.getenv("YOUTUBE_CLIENT_ID")
+    redirect_uri = os.getenv("YOUTUBE_REDIRECT_URI")
+    if not redirect_uri:
+        tiktok_redirect = os.getenv("TIKTOK_REDIRECT_URI")
+        if tiktok_redirect and "tiktok" in tiktok_redirect:
+            redirect_uri = tiktok_redirect.replace("tiktok", "youtube")
+        else:
+            redirect_uri = "http://localhost:8000/api/youtube/callback"
+
+    if not client_id:
+        raise HTTPException(
+            status_code=500, 
+            detail="Configuração do YouTube incompleta no .env (YOUTUBE_CLIENT_ID ausente)"
+        )
+    
+    scopes = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
+    
+    auth_url = (
+        "https://accounts.google.com/o/oauth2/v2/auth"
+        f"?client_id={client_id}"
+        f"&redirect_uri={redirect_uri}"
+        f"&response_type=code"
+        f"&scope={scopes}"
+        f"&access_type=offline"
+        f"&prompt=consent"
+        f"&state={email}"
+    )
+    
+    return {"url": auth_url}
+
+
+@app.get("/api/youtube/callback")
+def youtube_callback(code: str = None, state: str = None, error: str = None, error_description: str = None):
+    """
+    Callback do Google que recebe o code temporário.
+    Realiza a troca pelo access_token e refresh_token e salva no banco atrelado ao e-mail (state).
+    """
+    frontend_redirect = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    
+    if error:
+        return RedirectResponse(url=f"{frontend_redirect}/dashboard?youtube_error={error}")
+        
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Parâmetros code ou state ausentes")
+        
+    email = state
+    client_id = os.getenv("YOUTUBE_CLIENT_ID")
+    client_secret = os.getenv("YOUTUBE_CLIENT_SECRET")
+    
+    redirect_uri = os.getenv("YOUTUBE_REDIRECT_URI")
+    if not redirect_uri:
+        tiktok_redirect = os.getenv("TIKTOK_REDIRECT_URI")
+        if tiktok_redirect and "tiktok" in tiktok_redirect:
+            redirect_uri = tiktok_redirect.replace("tiktok", "youtube")
+        else:
+            redirect_uri = "http://localhost:8000/api/youtube/callback"
+            
+    token_url = "https://oauth2.googleapis.com/token"
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+    data = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "code": code,
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri
+    }
+    
+    response = requests.post(token_url, headers=headers, data=data)
+    print(f"[YOUTUBE CALLBACK] Troca de Token: Status {response.status_code}, Body: {response.text}")
+    
+    if response.status_code != 200:
+        return RedirectResponse(url=f"{frontend_redirect}/dashboard?youtube_error=token_exchange_failed")
+        
+    res_json = response.json()
+    access_token = res_json.get("access_token")
+    refresh_token = res_json.get("refresh_token")
+    
+    if not access_token:
+        return RedirectResponse(url=f"{frontend_redirect}/dashboard?youtube_error=no_token_in_response")
+        
+    channel_name = "Canal do YouTube"
+    avatar = ""
+    channel_id = ""
+    
+    try:
+        channels_url = "https://www.googleapis.com/youtube/v3/channels"
+        ch_headers = {
+            "Authorization": f"Bearer {access_token}"
+        }
+        ch_params = {
+            "part": "snippet",
+            "mine": "true"
+        }
+        ch_res = requests.get(channels_url, headers=ch_headers, params=ch_params)
+        print(f"[YOUTUBE CALLBACK] Canais: Status {ch_res.status_code}, Body: {ch_res.text}")
+        
+        if ch_res.status_code == 200:
+            ch_json = ch_res.json()
+            items = ch_json.get("items", [])
+            if items:
+                channel_data = items[0]
+                channel_id = channel_data.get("id")
+                snippet = channel_data.get("snippet", {})
+                channel_name = snippet.get("title") or "Canal do YouTube"
+                avatar = snippet.get("thumbnails", {}).get("default", {}).get("url") or ""
+    except Exception as ex:
+        print(f"[YOUTUBE CALLBACK WARNING] Erro ao buscar dados do canal: {ex}")
+
+    db_helper.save_youtube_connection(
+        email=email,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        channel_id=channel_id,
+        channel_name=channel_name,
+        avatar=avatar
+    )
+    
+    return RedirectResponse(url=f"{frontend_redirect}/dashboard?youtube_success=true")
+
+
+@app.get("/api/youtube/status")
+def youtube_status(email: str = Query(..., description="E-mail do usuário logado")):
+    """Retorna as informações do YouTube do usuário conectado."""
+    connection = db_helper.get_youtube_connection(email)
+    if connection:
+        return {
+            "connected": True,
+            "channel_name": connection["channel_name"] or "Canal do YouTube",
+            "avatar": connection["avatar"] or ""
+        }
+    return {"connected": False}
+
+
+@app.post("/api/youtube/disconnect")
+def youtube_disconnect(req: DisconnectRequest):
+    """Remove a conta do YouTube conectada."""
+    db_helper.delete_youtube_connection(req.email)
+    return {"success": True}
+
 @app.get("/api/tiktok/creator-info")
 def get_tiktok_creator_info(email: str = Query(..., description="E-mail do usuário logado")):
     """
@@ -591,4 +742,181 @@ async def get_upload_status(post_id: str):
     Retorna o progresso em tempo real e o status de um upload de segundo plano específico.
     """
     status = active_uploads.get(post_id, {"progress": 0, "status": "pending", "message": "Aguardando inicialização..."})
+    return status
+
+# ==============================================================================
+# YOUTUBE UPLOAD FLOW (BACKGROUND TASK)
+# ==============================================================================
+
+active_youtube_uploads = {}
+
+def upload_to_youtube_background(
+    file_path: str, 
+    email: str, 
+    title: str, 
+    post_id: str,
+    privacy_level: str = "private"
+):
+    try:
+        active_youtube_uploads[post_id] = {"progress": 5, "status": "uploading", "message": "Inicializando com o YouTube..."}
+        
+        connection = db_helper.get_youtube_connection(email)
+        if not connection or not connection["access_token"]:
+            print(f"[YOUTUBE BG ERROR] Nenhuma conta conectada para {email}")
+            active_youtube_uploads[post_id] = {"progress": 0, "status": "error", "message": "Nenhuma conta vinculada."}
+            return
+            
+        access_token = connection["access_token"]
+        refresh_token = connection["refresh_token"]
+        
+        if not os.path.exists(file_path):
+            print(f"[YOUTUBE BG ERROR] Arquivo temporário não encontrado: {file_path}")
+            active_youtube_uploads[post_id] = {"progress": 0, "status": "error", "message": "Arquivo temporário sumiu."}
+            return
+            
+        client_id = os.getenv("YOUTUBE_CLIENT_ID")
+        client_secret = os.getenv("YOUTUBE_CLIENT_SECRET")
+        
+        import google.oauth2.credentials
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaFileUpload
+        
+        creds = google.oauth2.credentials.Credentials(
+            token=access_token,
+            refresh_token=refresh_token,
+            client_id=client_id,
+            client_secret=client_secret,
+            token_uri="https://oauth2.googleapis.com/token"
+        )
+        
+        try:
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+            db_helper.save_youtube_connection(
+                email=email,
+                access_token=creds.token,
+                refresh_token=creds.refresh_token or refresh_token,
+                channel_id=connection["channel_id"],
+                channel_name=connection["channel_name"],
+                avatar=connection["avatar"]
+            )
+        except Exception as ref_err:
+            print(f"[YOUTUBE BG WARNING] Erro ao renovar credenciais automaticamente: {ref_err}")
+            
+        youtube = build("youtube", "v3", credentials=creds)
+        
+        clean_title = title[:100] if title else "Post Recap Video"
+        
+        body = {
+            "snippet": {
+                "title": clean_title,
+                "description": "Enviado via Post Recap Studio",
+                "categoryId": "24"
+            },
+            "status": {
+                "privacyStatus": privacy_level,
+                "selfDeclaredMadeForKids": False
+            }
+        }
+        
+        media = MediaFileUpload(file_path, chunksize=1024*1024, resumable=True)
+        request = youtube.videos().insert(
+            part="snippet,status",
+            body=body,
+            media_body=media
+        )
+        
+        print(f"[YOUTUBE BG] Iniciando envio para o YouTube. Vídeo: {file_path}")
+        response = None
+        last_percent = -1
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                percent = int(status.progress() * 100)
+                if percent != last_percent:
+                    mapped_percent = 10 + int(percent * 0.85)
+                    active_youtube_uploads[post_id] = {
+                        "progress": min(mapped_percent, 98),
+                        "status": "uploading",
+                        "message": f"Enviando vídeo para o YouTube ({percent}%)..."
+                    }
+                    print(f"[YOUTUBE BG] Progresso de upload: {percent}%")
+                    last_percent = percent
+                    
+        video_id = response.get("id")
+        print(f"[YOUTUBE BG SUCCESS] Vídeo enviado com sucesso para o YouTube! ID: {video_id}")
+        
+        active_youtube_uploads[post_id] = {"progress": 100, "status": "success", "message": "Publicado com sucesso no YouTube!"}
+    except Exception as e:
+        print(f"[YOUTUBE BG EXCEPTION] Ocorreu uma exceção: {str(e)}")
+        active_youtube_uploads[post_id] = {"progress": 0, "status": "error", "message": str(e)}
+    finally:
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                print(f"[YOUTUBE BG] Arquivo temporário removido: {file_path}")
+            except Exception as ex:
+                print(f"[YOUTUBE BG] Erro ao remover arquivo temporário: {str(ex)}")
+
+
+@app.post("/api/youtube/upload")
+async def youtube_upload(
+    background_tasks: BackgroundTasks,
+    email: str = Form(None),
+    title: str = Form(""),
+    post_id: str = Form(None),
+    privacy_level: str = Form("private"),
+    video: UploadFile = File(None)
+):
+    """
+    Recebe o arquivo de vídeo do frontend, salva-o temporariamente
+    e inicia a tarefa de upload em segundo plano no YouTube.
+    """
+    if not email:
+        raise HTTPException(status_code=400, detail="O e-mail do usuário é obrigatório.")
+    if not video:
+        raise HTTPException(status_code=400, detail="Por favor, selecione um arquivo de vídeo válido.")
+    if not post_id:
+        raise HTTPException(status_code=400, detail="O ID único do post é obrigatório.")
+        
+    connection = db_helper.get_youtube_connection(email)
+    if not connection or not connection["access_token"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Nenhuma conta do YouTube conectada. Conecte sua conta antes de publicar."
+        )
+        
+    active_youtube_uploads[post_id] = {"progress": 0, "status": "uploading", "message": "Enviando vídeo para o servidor..."}
+    
+    temp_file_name = f"yt_upload_{email.replace('@', '_').replace('.', '_')}_{int(time.time())}_{video.filename}"
+    temp_file_path = os.path.join(TEMP_DIR, temp_file_name)
+    
+    try:
+        with open(temp_file_path, "wb") as buffer:
+            shutil.copyfileobj(video.file, buffer)
+    except Exception as e:
+        active_youtube_uploads[post_id] = {"progress": 0, "status": "error", "message": f"Erro de disco no servidor: {str(e)}"}
+        raise HTTPException(status_code=500, detail=f"Erro ao salvar arquivo temporário no servidor: {str(e)}")
+        
+    background_tasks.add_task(
+        upload_to_youtube_background,
+        temp_file_path,
+        email,
+        title,
+        post_id,
+        privacy_level
+    )
+    
+    return {
+        "success": True,
+        "message": "Upload recebido com sucesso pelo servidor e iniciado em background no YouTube!"
+    }
+
+
+@app.get("/api/youtube/upload-status")
+async def get_youtube_upload_status(post_id: str):
+    """
+    Retorna o progresso em tempo real e o status de um upload de segundo plano específico no YouTube.
+    """
+    status = active_youtube_uploads.get(post_id, {"progress": 0, "status": "pending", "message": "Aguardando inicialização..."})
     return status
