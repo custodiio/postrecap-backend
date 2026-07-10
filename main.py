@@ -91,6 +91,7 @@ def tiktok_login(email: str = Query(..., description="E-mail do usuário do Fire
         f"&response_type=code"
         f"&redirect_uri={redirect_uri}"
         f"&state={email}"
+        f"&prompt=select_account"
     )
     
     return {"url": auth_url}
