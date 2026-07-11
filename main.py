@@ -830,7 +830,7 @@ def upload_to_youtube_background(
         body = {
             "snippet": {
                 "title": clean_title,
-                "description": description if description else "Enviado via Post Recap Studio",
+                "description": description if description else "",
                 "categoryId": category_id if category_id else "24"
             },
             "status": {
