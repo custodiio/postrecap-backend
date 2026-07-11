@@ -48,6 +48,7 @@ def init_db():
         channel_id TEXT,
         channel_name TEXT,
         avatar TEXT,
+        banner TEXT,
         connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(email) REFERENCES approved_users(email)
     )
@@ -61,6 +62,11 @@ def init_db():
         
     try:
         cursor.execute("ALTER TABLE youtube_connections ADD COLUMN refresh_token TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE youtube_connections ADD COLUMN banner TEXT")
     except sqlite3.OperationalError:
         pass
         
@@ -177,7 +183,7 @@ def delete_tiktok_connection(email: str):
     conn.close()
     print(f"[DB] Conexão TikTok removida para o usuário: {email}")
 
-def save_youtube_connection(email: str, access_token: str, refresh_token: str = None, channel_id: str = None, channel_name: str = None, avatar: str = None):
+def save_youtube_connection(email: str, access_token: str, refresh_token: str = None, channel_id: str = None, channel_name: str = None, avatar: str = None, banner: str = None):
     """Salva ou atualiza os tokens e detalhes da conta do YouTube do usuário."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -189,20 +195,20 @@ def save_youtube_connection(email: str, access_token: str, refresh_token: str = 
         if refresh_token:
             cursor.execute("""
             UPDATE youtube_connections 
-            SET access_token = ?, refresh_token = ?, channel_id = ?, channel_name = ?, avatar = ?, connected_at = CURRENT_TIMESTAMP
+            SET access_token = ?, refresh_token = ?, channel_id = ?, channel_name = ?, avatar = ?, banner = ?, connected_at = CURRENT_TIMESTAMP
             WHERE email = ?
-            """, (access_token, refresh_token, channel_id, channel_name, avatar, email))
+            """, (access_token, refresh_token, channel_id, channel_name, avatar, banner, email))
         else:
             cursor.execute("""
             UPDATE youtube_connections 
-            SET access_token = ?, channel_id = ?, channel_name = ?, avatar = ?, connected_at = CURRENT_TIMESTAMP
+            SET access_token = ?, channel_id = ?, channel_name = ?, avatar = ?, banner = ?, connected_at = CURRENT_TIMESTAMP
             WHERE email = ?
-            """, (access_token, channel_id, channel_name, avatar, email))
+            """, (access_token, channel_id, channel_name, avatar, banner, email))
     else:
         cursor.execute("""
-        INSERT INTO youtube_connections (email, access_token, refresh_token, channel_id, channel_name, avatar)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """, (email, access_token, refresh_token, channel_id, channel_name, avatar))
+        INSERT INTO youtube_connections (email, access_token, refresh_token, channel_id, channel_name, avatar, banner)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (email, access_token, refresh_token, channel_id, channel_name, avatar, banner))
         
     conn.commit()
     conn.close()
@@ -212,7 +218,7 @@ def get_youtube_connection(email: str):
     """Busca as credenciais conectadas do YouTube para o e-mail do usuário."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT access_token, refresh_token, channel_id, channel_name, avatar FROM youtube_connections WHERE email = ?", (email,))
+    cursor.execute("SELECT access_token, refresh_token, channel_id, channel_name, avatar, banner FROM youtube_connections WHERE email = ?", (email,))
     row = cursor.fetchone()
     conn.close()
     
@@ -222,7 +228,8 @@ def get_youtube_connection(email: str):
             "refresh_token": row[1],
             "channel_id": row[2],
             "channel_name": row[3],
-            "avatar": row[4]
+            "avatar": row[4],
+            "banner": row[5] if len(row) > 5 else None
         }
     return None
 

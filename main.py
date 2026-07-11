@@ -370,12 +370,13 @@ def youtube_callback(code: str = None, state: str = None, error: str = None, err
             "Authorization": f"Bearer {access_token}"
         }
         ch_params = {
-            "part": "snippet",
+            "part": "snippet,brandingSettings",
             "mine": "true"
         }
         ch_res = requests.get(channels_url, headers=ch_headers, params=ch_params)
         print(f"[YOUTUBE CALLBACK] Canais: Status {ch_res.status_code}, Body: {ch_res.text}")
         
+        banner = ""
         if ch_res.status_code == 200:
             ch_json = ch_res.json()
             items = ch_json.get("items", [])
@@ -385,8 +386,13 @@ def youtube_callback(code: str = None, state: str = None, error: str = None, err
                 snippet = channel_data.get("snippet", {})
                 channel_name = snippet.get("title") or "Canal do YouTube"
                 avatar = snippet.get("thumbnails", {}).get("default", {}).get("url") or ""
+                
+                branding_settings = channel_data.get("brandingSettings", {})
+                image_settings = branding_settings.get("image", {})
+                banner = image_settings.get("bannerExternalUrl") or ""
     except Exception as ex:
         print(f"[YOUTUBE CALLBACK WARNING] Erro ao buscar dados do canal: {ex}")
+        banner = ""
 
     db_helper.save_youtube_connection(
         email=email,
@@ -394,7 +400,8 @@ def youtube_callback(code: str = None, state: str = None, error: str = None, err
         refresh_token=refresh_token,
         channel_id=channel_id,
         channel_name=channel_name,
-        avatar=avatar
+        avatar=avatar,
+        banner=banner
     )
     
     return RedirectResponse(url=f"{frontend_redirect}/dashboard?youtube_success=true")
@@ -408,7 +415,8 @@ def youtube_status(email: str = Query(..., description="E-mail do usuário logad
         return {
             "connected": True,
             "channel_name": connection["channel_name"] or "Canal do YouTube",
-            "avatar": connection["avatar"] or ""
+            "avatar": connection["avatar"] or "",
+            "banner": connection.get("banner") or ""
         }
     return {"connected": False}
 
@@ -760,7 +768,8 @@ def upload_to_youtube_background(
     description: str = "",
     tags: str = "",
     made_for_kids: bool = False,
-    category_id: str = "24"
+    category_id: str = "24",
+    youtube_format: str = "video"
 ):
     try:
         active_youtube_uploads[post_id] = {"progress": 5, "status": "uploading", "message": "Inicializando com o YouTube..."}
@@ -803,7 +812,8 @@ def upload_to_youtube_background(
                 refresh_token=creds.refresh_token or refresh_token,
                 channel_id=connection["channel_id"],
                 channel_name=connection["channel_name"],
-                avatar=connection["avatar"]
+                avatar=connection["avatar"],
+                banner=connection.get("banner")
             )
         except Exception as ref_err:
             print(f"[YOUTUBE BG WARNING] Erro ao renovar credenciais automaticamente: {ref_err}")
@@ -811,7 +821,12 @@ def upload_to_youtube_background(
         youtube = build("youtube", "v3", credentials=creds)
         
         clean_title = title[:100] if title else "Post Recap Video"
-        
+        if youtube_format == "shorts" and "#shorts" not in clean_title.lower():
+            if len(clean_title) <= 92:
+                clean_title = f"{clean_title} #shorts"
+            else:
+                clean_title = f"{clean_title[:91]} #shorts"
+                
         body = {
             "snippet": {
                 "title": clean_title,
@@ -877,6 +892,7 @@ async def youtube_upload(
     tags: str = Form(""),
     made_for_kids: bool = Form(False),
     category_id: str = Form("24"),
+    youtube_format: str = Form("video"),
     video: UploadFile = File(None)
 ):
     """
@@ -919,7 +935,8 @@ async def youtube_upload(
         description,
         tags,
         made_for_kids,
-        category_id
+        category_id,
+        youtube_format
     )
     
     return {
