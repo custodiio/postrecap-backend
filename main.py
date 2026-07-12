@@ -832,18 +832,25 @@ def upload_to_youtube_background(
                 "title": clean_title,
                 "description": description if description else "",
                 "categoryId": category_id if category_id else "24"
-            },
-            "status": {
-                "privacyStatus": privacy_level,
-                "selfDeclaredMadeForKids": made_for_kids
             }
         }
         if tags:
             body["snippet"]["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
         
+        # Se a privacidade for "private" (padrão), enviamos sem o campo status
+        # para que o YouTube trate o vídeo como RASCUNHO (draft) em vez de Privado.
+        # Para public ou unlisted, incluímos o status normalmente.
+        upload_part = "snippet"
+        if privacy_level and privacy_level != "private":
+            body["status"] = {
+                "privacyStatus": privacy_level,
+                "selfDeclaredMadeForKids": made_for_kids
+            }
+            upload_part = "snippet,status"
+        
         media = MediaFileUpload(file_path, chunksize=1024*1024, resumable=True)
         request = youtube.videos().insert(
-            part="snippet,status",
+            part=upload_part,
             body=body,
             media_body=media
         )
