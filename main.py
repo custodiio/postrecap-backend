@@ -837,16 +837,13 @@ def upload_to_youtube_background(
         if tags:
             body["snippet"]["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
         
-        # Se a privacidade for "private" (padrão), enviamos sem o campo status
-        # para que o YouTube trate o vídeo como RASCUNHO (draft) em vez de Privado.
-        # Para public ou unlisted, incluímos o status normalmente.
-        upload_part = "snippet"
-        if privacy_level and privacy_level != "private":
-            body["status"] = {
-                "privacyStatus": privacy_level,
-                "selfDeclaredMadeForKids": made_for_kids
-            }
-            upload_part = "snippet,status"
+        # A API v3 do YouTube não possui um status "draft" oficial. Omitir o status faz o vídeo ir como Público.
+        # Portanto, para Rascunho ("private" no frontend), enviamos "private" no status para garantir que o vídeo fique oculto e seguro.
+        body["status"] = {
+            "privacyStatus": privacy_level if privacy_level in ["public", "unlisted", "private"] else "private",
+            "selfDeclaredMadeForKids": made_for_kids
+        }
+        upload_part = "snippet,status"
         
         media = MediaFileUpload(file_path, chunksize=1024*1024, resumable=True)
         request = youtube.videos().insert(
